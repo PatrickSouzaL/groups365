@@ -1,13 +1,60 @@
-# Script para extrair usuários e grupos do Microsoft 365
+﻿# Script para extrair usuários e grupos do Microsoft 365
 # Requer o módulo Microsoft.Graph.Users e Microsoft.Graph.Groups
 
-# Instalar o módulo se necessário (descomente a linha abaixo se não tiver o módulo instalado)
-# Install-Module Microsoft.Graph -Scope CurrentUser
+# Switch interno: usado quando o script se reinicia numa sessão limpa após instalar módulos.
+# NÃO usar manualmente na primeira execução.
+param(
+    [switch]$SkipModuleCheck
+)
 
-# Instalar o módulo ImportExcel se necessário (para gerar .xlsx)
-if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
-    Write-Host "Instalando módulo ImportExcel..." -ForegroundColor Cyan
-    Install-Module ImportExcel -Scope CurrentUser -Force
+# Módulos necessários
+$requiredModules = @(
+    "Microsoft.Graph.Authentication",  # Connect-MgGraph
+    "Microsoft.Graph.Users",           # Get-MgUser / Get-MgUserMemberOf
+    "Microsoft.Graph.Groups",          # Get-MgGroup
+    "ImportExcel"                      # Export-Excel (.xlsx)
+)
+
+# Validação e instalação automática dos módulos faltantes.
+# IMPORTANTE: no Windows PowerShell 5.1, instalar e importar os módulos do Microsoft.Graph
+# na MESMA sessão causa "TypeLoadException: GetTokenAsync ... não tem uma implementação"
+# (conflito de assembly em uso). Por isso, se algo for instalado, reiniciamos o script
+# numa sessão nova e limpa antes de importar/usar os módulos.
+if (-not $SkipModuleCheck) {
+    $installedAny = $false
+    foreach ($module in $requiredModules) {
+        if (-not (Get-Module -ListAvailable -Name $module)) {
+            Write-Host "Módulo '$module' não encontrado. Instalando..." -ForegroundColor Cyan
+            try {
+                Install-Module $module -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+                $installedAny = $true
+                Write-Host "Módulo '$module' instalado com sucesso." -ForegroundColor Green
+            }
+            catch {
+                Write-Host "Falha ao instalar o módulo '$module': $($_.Exception.Message)" -ForegroundColor Red
+                exit 1
+            }
+        }
+    }
+
+    if ($installedAny) {
+        Write-Host "Módulos recém-instalados. Reiniciando em uma sessão limpa para evitar conflitos de assembly..." -ForegroundColor Yellow
+        $psExe = (Get-Process -Id $PID).Path   # mesmo host (powershell.exe)
+        & $psExe -NoProfile -ExecutionPolicy Bypass -File "$PSCommandPath" -SkipModuleCheck
+        exit $LASTEXITCODE
+    }
+}
+
+# Importa os módulos na sessão atual (já livre do churn de instalação)
+foreach ($module in $requiredModules) {
+    try {
+        Import-Module $module -ErrorAction Stop
+    }
+    catch {
+        Write-Host "Falha ao importar o módulo '$module': $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Feche esta janela do PowerShell, abra uma nova e execute o script novamente." -ForegroundColor Yellow
+        exit 1
+    }
 }
 
 # Conectar ao Microsoft Graph
